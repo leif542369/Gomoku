@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <link rel="shortcut icon" href="/wuziqi.ico" sizes="16x16" type="image/png">
+    <title>在线五子棋CL社区版</title>
+    <style>
+        body {
+            -webkit-overflow-scrolling: touch;
+            background-color: #000;
+            background: url('/123.jpg') no-repeat center center fixed;
+            -webkit-background-size: cover;
+            -moz-background-size: cover;
+            -o-background-size: cover;
+            background-size: cover;
+            color: #fff;
+            font-family: 'Roboto', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+
+        #gameContainer {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+            max-width: 700px;
+            margin: 20px auto;
+        }
+
+        #board {
+            border: 3px solid #000;
+            background: #fff;
+            touch-action: manipulation;
+        }
+
+        #lobby {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            max-width: 500px;
+            margin: 50px auto;
+        }
+
+        #status {
+            font-size: 24px;
+            margin: 20px 0;
+            color: #5a4638;
+            min-height: 36px;
+        }
+
+        button {
+            padding: 12px 25px;
+            font-size: 16px;
+            margin: 10px;
+            background: #5a4638;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+            min-width: 120px;
+        }
+
+        button:hover {
+            background: #3d2f25;
+            transform: scale(1.05);
+        }
+
+        input {
+            padding: 12px;
+            font-size: 16px;
+            width: 200px;
+            border: 2px solid #5a4638;
+            border-radius: 5px;
+            margin: 10px;
+            display: block;
+            width: calc(100% - 24px);
+            box-sizing: border-box;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 30px 50px;
+            border-radius: 10px;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            text-align: center;
+            color: #333;
+        }
+
+        .overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+        }
+
+        #musicControls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 8px;
+            z-index: 1001;
+            color: white;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+        }
+    </style>
+</head>
+<body>
+    <button id="playMusicBtn">播放背景音乐</button>
+
+    <div id="lobby">
+        <input type="text" id="inputRoomId" placeholder="输入房间号">
+        <button onclick="joinRoom()">加入房间</button>
+        <button onclick="createRoom()">创建新房间</button>
+        <div id="roomStatus"></div>
+    </div>
+
+    <div id="gameContainer" hidden>
+        <canvas id="board"></canvas>
+        <div id="status"></div>
+    </div>
+
+    <div class="overlay" id="overlay"></div>
+    <div class="modal" id="winModal">
+        <h2 id="winText"></h2>
+        <p>5秒后自动开始新局...</p>
+        <p id="countdown">5</p>
+    </div>
+
+    <div id="musicControls">
+        <button class="control-btn" id="pauseMusicBtn">暂停背景音乐</button>
+        <button class="control-btn" id="resumeMusicBtn" style="display:none;">继续背景音乐</button>
+        <label for="volumeControl">音量:</label>
+        <input type="range" id="volumeControl" min="0" max="1" step="0.01" value="0.5">
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "XXXXXXXXX",
+            authDomain: "XXXXXXXXX",
+            databaseURL: "XXXXXXXXXXXXXXX",
+            projectId: "XXXXXXXXXXXXXX",
+            storageBucket: "XXXXXXXXXXXXXXX",
+            messagingSenderId: "XXXXXXXXXXXXXX",
+            appId: "XXXXXXXXXXXXXXXXXXX"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        const BOARD_SIZE = 15;
+        const CELL_SIZE = 40;
+        const BOARD_PADDING = 20;
+        let currentPlayer = 1;
+        let gameOver = false;
+        let roomId = null;
+        let playerNumber = 0;
+        let countdownInterval = null;
+
+        const winSound = new Audio('/2579-preview.mp3');
+        const placeSound = new Audio('/2953-preview.mp3');
+        const bgMusic = new Audio('/123123.mp3');
+        bgMusic.loop = true;
+
+        const canvas = document.getElementById('board');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        const lobbyDiv = document.getElementById('lobby');
+        const gameContainer = document.getElementById('gameContainer');
+
+        let board = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(0));
+
+        canvas.width = BOARD_SIZE * CELL_SIZE + BOARD_PADDING * 2;
+        canvas.height = BOARD_SIZE * CELL_SIZE + BOARD_PADDING * 2;
+
+        // 音乐控制
+        document.getElementById('playMusicBtn').addEventListener('click', () => {
+            bgMusic.play().catch(console.error);
+            document.getElementById('playMusicBtn').style.display = 'none';
+            document.getElementById('musicControls').style.display = 'flex';
+        });
+
+        document.getElementById('pauseMusicBtn').addEventListener('click', () => {
+            bgMusic.pause();
+            document.getElementById('pauseMusicBtn').style.display = 'none';
+            document.getElementById('resumeMusicBtn').style.display = 'block';
+        });
+
+        document.getElementById('resumeMusicBtn').addEventListener('click', () => {
+            bgMusic.play();
+            document.getElementById('resumeMusicBtn').style.display = 'none';
+            document.getElementById('pauseMusicBtn').style.display = 'block';
+        });
+
+        document.getElementById('volumeControl').addEventListener('input', (e) => {
+            bgMusic.volume = e.target.value;
+        });
+
+        function createRoom() {
+            roomId = generateRoomId();
+            playerNumber = 1;
+
+            database.ref(`games/${roomId}`).set({
+                board: Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(0)),
+                currentPlayer: 1,
+                players: { player1: true, player2: false },
+                winner: null
+            });
+
+            setupGame();
+            startListening();
+        }
+
+        function joinRoom() {
+            const inputRoomId = document.getElementById('inputRoomId').value.trim();
+            if (!inputRoomId) return;
+            roomId = inputRoomId;
+
+            database.ref(`games/${roomId}`).once('value').then(snapshot => {
+                if (snapshot.exists()) {
+                    playerNumber = 2;
+                    database.ref(`games/${roomId}`).update({
+                        'players/player2': true,
+                        currentPlayer: 1
+                    });
+                    setupGame();
+                    startListening();
+                } else {
+                    alert('房间不存在！');
+                }
+            });
+        }
+
+        function startListening() {
+            const gameRef = database.ref(`games/${roomId}`);
+
+            gameRef.on('value', snapshot => {
+                const gameData = snapshot.val();
+                if (!gameData) return;
+
+                board = gameData.board.map(row => [...row]);
+                currentPlayer = gameData.currentPlayer;
+                gameOver = !!gameData.winner;
+
+                drawBoard();
+                updateStatus(gameData);
+
+                if (gameData.winner) {
+                    showWinModal(gameData.winner);
+                } else {
+                    checkGameOver();
+                }
+            });
+        }
+
+        function drawBoard() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 修复棋盘线条绘制
+            ctx.strokeStyle = '#5a4638';
+            ctx.lineWidth = 1.5;
+			
+			 //  优化坐标计算
+            const maxX = BOARD_PADDING + (BOARD_SIZE - 1) * CELL_SIZE;
+            const maxY = BOARD_PADDING + (BOARD_SIZE - 1) * CELL_SIZE;
+            
+            // 横向线条
+             for (let i = 0; i < BOARD_SIZE; i++) {
+                const y = BOARD_PADDING + i * CELL_SIZE;
+                ctx.beginPath();
+                ctx.moveTo(BOARD_PADDING, y + 0.5);    // +0.5消除抗锯齿
+                ctx.lineTo(maxX + 0.5, y + 0.5);       // 延伸到最右侧
+                ctx.stroke();
+            }
+
+            // 纵向线条
+            for (let i = 0; i < BOARD_SIZE; i++) {
+                const x = BOARD_PADDING + i * CELL_SIZE;
+                ctx.beginPath();
+                ctx.moveTo(x + 0.5, BOARD_PADDING);    // +0.5消除抗锯齿
+                ctx.lineTo(x + 0.5, maxY + 0.5);       // 延伸到最底部
+                ctx.stroke();
+            }
+
+            // 绘制棋子
+            for (let i = 0; i < BOARD_SIZE; i++) {
+                for (let j = 0; j < BOARD_SIZE; j++) {
+                    if (board[i][j] === 1) {
+                        drawPiece(i, j, '#2d1a12');
+                    } else if (board[i][j] === 2) {
+                        drawPiece(i, j, '#f0f0f0');
+                    }
+                }
+            }
+        }
+
+        function drawPiece(x, y, color) {
+            ctx.beginPath();
+            ctx.arc(
+                BOARD_PADDING + x * CELL_SIZE,
+                BOARD_PADDING + y * CELL_SIZE,
+                CELL_SIZE / 2 - 2,
+                0,
+                Math.PI * 2
+            );
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.strokeStyle = '#5a4638';
+            ctx.stroke();
+        }
+
+        canvas.addEventListener('click', async (e) => {
+            if (gameOver || playerNumber !== currentPlayer) return;
+
+            const players = (await database.ref(`games/${roomId}/players`).once('value')).val();
+            if (!players.player2) {
+                alert("等待玩家加入...");
+                return;
+            }
+
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor((e.clientX - rect.left - BOARD_PADDING + CELL_SIZE / 2) / CELL_SIZE);
+            const y = Math.floor((e.clientY - rect.top - BOARD_PADDING + CELL_SIZE / 2) / CELL_SIZE);
+
+            if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE && board[x][y] === 0) {
+                database.ref(`games/${roomId}`).update({
+                    [`board/${x}/${y}`]: playerNumber,
+                    currentPlayer: playerNumber === 1 ? 2 : 1
+                });
+                placeSound.play();
+            }
+        });
+
+        function checkGameOver() {
+            for (let i = 0; i < BOARD_SIZE; i++) {
+                for (let j = 0; j < BOARD_SIZE; j++) {
+                    if (board[i][j] !== 0 && checkWin(i, j)) {
+                        database.ref(`games/${roomId}/winner`).set(board[i][j]);
+                        return;
+                    }
+                }
+            }
+        }
+
+        function checkWin(x, y) {
+            const player = board[x][y];
+            const directions = [
+                [1, 0],  // 水平
+                [0, 1],  // 垂直
+                [1, 1],  // 正斜线
+                [1, -1]  // 反斜线
+            ];
+
+            for (const [dx, dy] of directions) {
+                let count = 1;
+                
+                // 正向检查
+                let i = x + dx, j = y + dy;
+                while (i >= 0 && i < BOARD_SIZE && 
+                       j >= 0 && j < BOARD_SIZE && 
+                       board[i][j] === player) {
+                    count++;
+                    i += dx;
+                    j += dy;
+                }
+
+                // 反向检查
+                i = x - dx;
+                j = y - dy;
+                while (i >= 0 && i < BOARD_SIZE && 
+                       j >= 0 && j < BOARD_SIZE && 
+                       board[i][j] === player) {
+                    count++;
+                    i -= dx;
+                    j -= dy;
+                }
+
+                if (count >= 5) return true;
+            }
+            return false;
+        }
+
+        function showWinModal(winnerPlayer) {
+            if(document.getElementById('winModal').style.display === 'block') return;
+            
+            winSound.play();
+            document.getElementById('winText').textContent = 
+                `${winnerPlayer === 1 ? '黑棋' : '白棋'} 玩家获胜！`;
+            document.getElementById('winModal').style.display = 'block';
+            document.getElementById('overlay').style.display = 'block';
+
+            let seconds = 5;
+            document.getElementById('countdown').textContent = seconds;
+            countdownInterval = setInterval(() => {
+                seconds--;
+                document.getElementById('countdown').textContent = seconds;
+                if(seconds <= 0) {
+                    clearInterval(countdownInterval);
+                    resetGame();
+                }
+            }, 1000);
+        }
+
+        function resetGame() {
+            const gameRef = database.ref(`games/${roomId}`);
+            gameRef.once('value').then(snapshot => {
+                const gameData = snapshot.val();
+                const winner = gameData.winner;
+                gameRef.update({
+                    board: Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(0)),
+                    currentPlayer: winner || 1,
+                    winner: null
+                });
+            });
+
+            document.getElementById('winModal').style.display = 'none';
+            document.getElementById('overlay').style.display = 'none';
+            clearInterval(countdownInterval);
+        }
+
+        function updateStatus(gameData) {
+            if (gameData.winner) {
+                statusDiv.textContent = "游戏结束";
+                return;
+            }
+
+            const players = gameData.players || {};
+            let statusText = '';
+            
+            statusText += players.player1 ? '玩家1已准备 ' : '';
+            statusText += players.player2 ? '玩家2已加入 ' : '';
+
+            if (!players.player2) {
+                statusText += "等待玩家加入...";
+            } else {
+                statusText += (playerNumber === currentPlayer ? 
+                    "轮到您下棋" : "等待对方下棋...");
+            }
+
+            statusDiv.textContent = statusText;
+        }
+
+        function generateRoomId() {
+            return Math.random().toString(36).substr(2, 6).toUpperCase();
+        }
+
+        function setupGame() {
+            lobbyDiv.hidden = true;
+            gameContainer.hidden = false;
+            document.title = `房间号 ${roomId}`;
+        }
+    </script>
+</body>
+</html>
